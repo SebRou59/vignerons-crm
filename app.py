@@ -129,6 +129,20 @@ def _save_filter_widgets():
     for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
         st.session_state[name] = st.session_state.get(_filter_widget_key(name), st.session_state[name])
 
+
+def _save_filter_state():
+    """Sauvegarde persistante des filtres pour survivre au changement de page."""
+    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
+        st.session_state[f"saved_{name}"] = st.session_state.get(name)
+
+
+def _restore_filter_state():
+    """Restaure les filtres si Streamlit a nettoye les widgets non rendus."""
+    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
+        saved_name = f"saved_{name}"
+        if saved_name in st.session_state:
+            st.session_state[name] = st.session_state[saved_name]
+
 _init_state()
 
 # ── Vérification auth ──
@@ -350,7 +364,7 @@ def render_list():
 
     st.title("🍷 Vignerons Indépendants — CRM")
 
-    _load_filter_widgets()
+    _restore_filter_state()
     vignerons = load_vignerons()
     if not vignerons:
         st.info("👈 Aucun producteur en base. Lancez le scraping depuis la barre latérale.")
@@ -386,6 +400,7 @@ def render_list():
         only_no_details = st.checkbox("Sans coordonnées (à scraper)", key="f_no_details")
 
     # Filtrage
+    _save_filter_state()
     filtered = vignerons
     if search:
         q = search.lower()
