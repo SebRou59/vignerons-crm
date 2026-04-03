@@ -100,6 +100,7 @@ def _init_state():
         "auth_token": None,
         "page": "list",
         "selected_vigneron": None,
+        "last_selected_row": None,   # pour simuler le double-clic
         "auteur": "",
     }
     for k, v in defaults.items():
@@ -417,21 +418,31 @@ def render_list():
     selected_rows = event.selection.get("rows", []) if hasattr(event, "selection") else []
     selected_vignerons = [filtered[i] for i in selected_rows]
 
+    # ── Double-clic simulé : même ligne cliquée deux fois → ouvre la fiche ──
+    if len(selected_rows) == 1:
+        row_id = filtered[selected_rows[0]].get("id")
+        if st.session_state.last_selected_row == row_id:
+            # Deuxième clic sur la même ligne → navigation
+            st.session_state.selected_vigneron = filtered[selected_rows[0]]
+            st.session_state.page = "fiche"
+            st.session_state.last_selected_row = None
+            st.rerun()
+        else:
+            st.session_state.last_selected_row = row_id
+    else:
+        st.session_state.last_selected_row = None
+
     # ── Actions sur la sélection ──
     if selected_vignerons:
-        act1, act2, act3 = st.columns([2, 2, 4])
+        act1, act2 = st.columns([2, 2])
 
-        # Ouvrir la fiche (1 seule sélection)
         with act1:
             if len(selected_vignerons) == 1:
-                if st.button(f"🔍 Ouvrir la fiche — {selected_vignerons[0].get('nom', '')}", type="primary"):
-                    st.session_state.selected_vigneron = selected_vignerons[0]
-                    st.session_state.page = "fiche"
-                    st.rerun()
+                nom = selected_vignerons[0].get("nom", "")
+                st.caption(f"**{nom}** sélectionné — double-cliquez pour ouvrir la fiche")
             else:
                 st.caption(f"**{len(selected_vignerons)}** lignes sélectionnées")
 
-        # Charger les coordonnées des sélectionnés
         with act2:
             urls_sel_sans_details = [
                 v["url_fiche"] for v in selected_vignerons
