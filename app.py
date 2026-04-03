@@ -350,6 +350,7 @@ def render_list():
 
     st.title("🍷 Vignerons Indépendants — CRM")
 
+    _load_filter_widgets()
     vignerons = load_vignerons()
     if not vignerons:
         st.info("👈 Aucun producteur en base. Lancez le scraping depuis la barre latérale.")
