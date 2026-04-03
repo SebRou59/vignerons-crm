@@ -408,35 +408,17 @@ def render_list():
         use_container_width=True,
         height=480,
         on_select="rerun",
-        selection_mode="multi-row",
+        selection_mode="single-row",
         column_config={
             "Site web": st.column_config.LinkColumn("Site web", display_text="🌐 Ouvrir"),
         },
     )
 
     selected_rows = event.selection.get("rows", []) if hasattr(event, "selection") else []
-    selected_vignerons = [filtered[i] for i in selected_rows]
-
-    # ── Sélection unique → ouverture immédiate de la fiche ──
-    if len(selected_vignerons) == 1:
-        st.session_state.selected_vigneron = selected_vignerons[0]
+    if selected_rows:
+        st.session_state.selected_vigneron = filtered[selected_rows[0]]
         st.session_state.page = "fiche"
         st.rerun()
-
-    # ── Sélection multiple → actions en masse ──
-    if len(selected_vignerons) > 1:
-        act1, act2 = st.columns([2, 2])
-        with act1:
-            st.caption(f"**{len(selected_vignerons)}** lignes sélectionnées")
-        with act2:
-            urls_sel_sans_details = [
-                v["url_fiche"] for v in selected_vignerons
-                if v.get("url_fiche") and not v.get("details_scrapped_at")
-            ]
-            if urls_sel_sans_details and is_scraping_enabled():
-                if st.button(f"📞 Coordonnées ({len(urls_sel_sans_details)} fiches)", type="secondary", use_container_width=True):
-                    _scrape_coordonnees(urls_sel_sans_details)
-                    _refresh()
 
     # ── Scraping coordonnées sur la sélection ──
     st.divider()
