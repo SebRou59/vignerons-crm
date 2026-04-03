@@ -113,6 +113,22 @@ def _init_state():
         if k not in st.session_state:
             st.session_state[k] = v
 
+
+def _filter_widget_key(name: str) -> str:
+    return f"ui_{name}"
+
+
+def _load_filter_widgets():
+    """Recharge les widgets de filtres depuis l'etat persistant."""
+    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
+        st.session_state[_filter_widget_key(name)] = st.session_state[name]
+
+
+def _save_filter_widgets():
+    """Copie les valeurs des widgets vers l'etat persistant."""
+    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
+        st.session_state[name] = st.session_state.get(_filter_widget_key(name), st.session_state[name])
+
 _init_state()
 
 # ── Vérification auth ──
