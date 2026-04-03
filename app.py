@@ -339,27 +339,26 @@ def render_list():
         st.info("👈 Aucun producteur en base. Lancez le scraping depuis la barre latérale.")
         return
 
-    # ── Filtres (persistés dans session state) ──
+    # ── Filtres (persistés dans session state via key=) ──
     c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
     with c1:
-        search = st.text_input("🔎 Rechercher", value=st.session_state.f_search,
-                               label_visibility="collapsed", placeholder="Nom, région, commune…",
-                               key="f_search")
+        search = st.text_input("🔎 Rechercher", label_visibility="collapsed",
+                               placeholder="Nom, région, commune…", key="f_search")
     with c2:
         regions = ["Toutes régions"] + sorted({v.get("region", "") for v in vignerons if v.get("region")})
-        region_f = st.selectbox("Région", regions, label_visibility="collapsed",
-                                index=regions.index(st.session_state.f_region) if st.session_state.f_region in regions else 0,
-                                key="f_region")
+        if st.session_state.f_region not in regions:
+            st.session_state.f_region = "Toutes régions"
+        region_f = st.selectbox("Région", regions, label_visibility="collapsed", key="f_region")
     with c3:
         depts = ["Tous depts"] + sorted({v.get("departement", "") for v in vignerons if v.get("departement")})
-        dept_f = st.selectbox("Département", depts, label_visibility="collapsed",
-                              index=depts.index(st.session_state.f_dept) if st.session_state.f_dept in depts else 0,
-                              key="f_dept")
+        if st.session_state.f_dept not in depts:
+            st.session_state.f_dept = "Tous depts"
+        dept_f = st.selectbox("Département", depts, label_visibility="collapsed", key="f_dept")
     with c4:
         statut_opts = ["Tous statuts"] + STATUTS
-        statut_f = st.selectbox("Statut", statut_opts, label_visibility="collapsed",
-                                index=statut_opts.index(st.session_state.f_statut) if st.session_state.f_statut in statut_opts else 0,
-                                key="f_statut")
+        if st.session_state.f_statut not in statut_opts:
+            st.session_state.f_statut = "Tous statuts"
+        statut_f = st.selectbox("Statut", statut_opts, label_visibility="collapsed", key="f_statut")
 
     c5, c6, c7 = st.columns([1, 1, 4])
     with c5:
