@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Cache scraper local
+vignerons_cache.json
+vignerons_details_cache.json
+
+# Secrets Streamlit (ne jamais committer)
+.streamlit/secrets.toml
+
+# Divers
+.env
+*.log
