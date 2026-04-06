@@ -108,6 +108,7 @@ def _init_state():
         "f_phone":  False,
         "f_web":    False,
         "f_no_details": False,
+        "last_viewed_id": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -342,51 +343,55 @@ def render_list():
         st.info("👈 Aucun producteur en base. Lancez le scraping depuis la barre latérale.")
         return
 
-    # ── Filtres ──
+    # ── Filtres (index= explicite pour résister aux navigations de page) ──
     c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
     with c1:
-        st.text_input("🔎 Rechercher", label_visibility="collapsed",
-                      placeholder="Nom, région, commune…", key="f_search")
+        f_search = st.text_input("🔎 Rechercher", value=st.session_state.f_search,
+                                 label_visibility="collapsed", placeholder="Nom, région, commune…")
+        st.session_state.f_search = f_search
     with c2:
         regions = ["Toutes régions"] + sorted({v.get("region", "") for v in vignerons if v.get("region")})
-        if st.session_state.f_region not in regions:
-            st.session_state.f_region = "Toutes régions"
-        st.selectbox("Région", regions, label_visibility="collapsed", key="f_region")
+        r_idx = regions.index(st.session_state.f_region) if st.session_state.f_region in regions else 0
+        f_region = st.selectbox("Région", regions, index=r_idx, label_visibility="collapsed")
+        st.session_state.f_region = f_region
     with c3:
         depts = ["Tous depts"] + sorted({v.get("departement", "") for v in vignerons if v.get("departement")})
-        if st.session_state.f_dept not in depts:
-            st.session_state.f_dept = "Tous depts"
-        st.selectbox("Département", depts, label_visibility="collapsed", key="f_dept")
+        d_idx = depts.index(st.session_state.f_dept) if st.session_state.f_dept in depts else 0
+        f_dept = st.selectbox("Département", depts, index=d_idx, label_visibility="collapsed")
+        st.session_state.f_dept = f_dept
     with c4:
         statut_opts = ["Tous statuts"] + STATUTS
-        if st.session_state.f_statut not in statut_opts:
-            st.session_state.f_statut = "Tous statuts"
-        st.selectbox("Statut", statut_opts, label_visibility="collapsed", key="f_statut")
+        s_idx = statut_opts.index(st.session_state.f_statut) if st.session_state.f_statut in statut_opts else 0
+        f_statut = st.selectbox("Statut", statut_opts, index=s_idx, label_visibility="collapsed")
+        st.session_state.f_statut = f_statut
 
     c5, c6, c7 = st.columns([1, 1, 4])
     with c5:
-        st.checkbox("📞 Tél uniquement", key="f_phone")
+        f_phone = st.checkbox("📞 Tél uniquement", value=st.session_state.f_phone)
+        st.session_state.f_phone = f_phone
     with c6:
-        st.checkbox("🌐 Site uniquement", key="f_web")
+        f_web = st.checkbox("🌐 Site uniquement", value=st.session_state.f_web)
+        st.session_state.f_web = f_web
     with c7:
-        st.checkbox("Sans coordonnées (à scraper)", key="f_no_details")
+        f_no_details = st.checkbox("Sans coordonnées (à scraper)", value=st.session_state.f_no_details)
+        st.session_state.f_no_details = f_no_details
 
     # Filtrage
     filtered = vignerons
-    if st.session_state.f_search:
-        q = st.session_state.f_search.lower()
+    if f_search:
+        q = f_search.lower()
         filtered = [v for v in filtered if any(q in str(val).lower() for val in v.values())]
-    if st.session_state.f_region != "Toutes régions":
-        filtered = [v for v in filtered if v.get("region", "").lower() == st.session_state.f_region.lower()]
-    if st.session_state.f_dept != "Tous depts":
-        filtered = [v for v in filtered if v.get("departement", "") == st.session_state.f_dept]
-    if st.session_state.f_statut != "Tous statuts":
-        filtered = [v for v in filtered if v.get("statut") == st.session_state.f_statut]
-    if st.session_state.f_phone:
+    if f_region != "Toutes régions":
+        filtered = [v for v in filtered if v.get("region", "").lower() == f_region.lower()]
+    if f_dept != "Tous depts":
+        filtered = [v for v in filtered if v.get("departement", "") == f_dept]
+    if f_statut != "Tous statuts":
+        filtered = [v for v in filtered if v.get("statut") == f_statut]
+    if f_phone:
         filtered = [v for v in filtered if v.get("telephone")]
-    if st.session_state.f_web:
+    if f_web:
         filtered = [v for v in filtered if v.get("site_web")]
-    if st.session_state.f_no_details:
+    if f_no_details:
         filtered = [v for v in filtered if not v.get("details_scrapped_at")]
 
     # ── Métriques ──
@@ -433,9 +438,29 @@ def render_list():
 
     selected_rows = event.selection.get("rows", []) if hasattr(event, "selection") else []
     if selected_rows:
+        st.session_state.last_viewed_id = filtered[selected_rows[0]]["id"]
         st.session_state.selected_vigneron = filtered[selected_rows[0]]
         st.session_state.page = "fiche"
         st.rerun()
+
+    # ── Scroll au dernier vigneron consulté ──
+    if st.session_state.last_viewed_id:
+        scroll_row = next(
+            (i for i, v in enumerate(filtered) if v["id"] == st.session_state.last_viewed_id),
+            0,
+        )
+        if scroll_row > 0:
+            st.components.v1.html(f"""
+            <script>
+                setTimeout(function() {{
+                    const dfs = window.parent.document.querySelectorAll('[data-testid="stDataFrame"]');
+                    if (dfs.length > 0) {{
+                        const scroller = dfs[0].querySelector('.dvn-scroller');
+                        if (scroller) scroller.scrollTop = {scroll_row * 36};
+                    }}
+                }}, 300);
+            </script>
+            """, height=0)
 
     # ── Scraping coordonnées sur la sélection ──
     st.divider()
