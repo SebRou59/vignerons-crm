@@ -114,34 +114,7 @@ def _init_state():
             st.session_state[k] = v
 
 
-def _filter_widget_key(name: str) -> str:
-    return f"ui_{name}"
 
-
-def _load_filter_widgets():
-    """Recharge les widgets de filtres depuis l'etat persistant."""
-    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
-        st.session_state[_filter_widget_key(name)] = st.session_state[name]
-
-
-def _save_filter_widgets():
-    """Copie les valeurs des widgets vers l'etat persistant."""
-    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
-        st.session_state[name] = st.session_state.get(_filter_widget_key(name), st.session_state[name])
-
-
-def _save_filter_state():
-    """Sauvegarde persistante des filtres pour survivre au changement de page."""
-    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
-        st.session_state[f"saved_{name}"] = st.session_state.get(name)
-
-
-def _restore_filter_state():
-    """Restaure les filtres si Streamlit a nettoye les widgets non rendus."""
-    for name in ["f_search", "f_region", "f_dept", "f_statut", "f_phone", "f_web", "f_no_details"]:
-        saved_name = f"saved_{name}"
-        if saved_name in st.session_state:
-            st.session_state[name] = st.session_state[saved_name]
 
 _init_state()
 
@@ -364,58 +337,56 @@ def render_list():
 
     st.title("🍷 Vignerons Indépendants — CRM")
 
-    _restore_filter_state()
     vignerons = load_vignerons()
     if not vignerons:
         st.info("👈 Aucun producteur en base. Lancez le scraping depuis la barre latérale.")
         return
 
-    # ── Filtres (persistés dans session state via key=) ──
+    # ── Filtres ──
     c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
     with c1:
-        search = st.text_input("🔎 Rechercher", label_visibility="collapsed",
-                               placeholder="Nom, région, commune…", key="f_search")
+        st.text_input("🔎 Rechercher", label_visibility="collapsed",
+                      placeholder="Nom, région, commune…", key="f_search")
     with c2:
         regions = ["Toutes régions"] + sorted({v.get("region", "") for v in vignerons if v.get("region")})
         if st.session_state.f_region not in regions:
             st.session_state.f_region = "Toutes régions"
-        region_f = st.selectbox("Région", regions, label_visibility="collapsed", key="f_region")
+        st.selectbox("Région", regions, label_visibility="collapsed", key="f_region")
     with c3:
         depts = ["Tous depts"] + sorted({v.get("departement", "") for v in vignerons if v.get("departement")})
         if st.session_state.f_dept not in depts:
             st.session_state.f_dept = "Tous depts"
-        dept_f = st.selectbox("Département", depts, label_visibility="collapsed", key="f_dept")
+        st.selectbox("Département", depts, label_visibility="collapsed", key="f_dept")
     with c4:
         statut_opts = ["Tous statuts"] + STATUTS
         if st.session_state.f_statut not in statut_opts:
             st.session_state.f_statut = "Tous statuts"
-        statut_f = st.selectbox("Statut", statut_opts, label_visibility="collapsed", key="f_statut")
+        st.selectbox("Statut", statut_opts, label_visibility="collapsed", key="f_statut")
 
     c5, c6, c7 = st.columns([1, 1, 4])
     with c5:
-        only_phone = st.checkbox("📞 Tél uniquement", key="f_phone")
+        st.checkbox("📞 Tél uniquement", key="f_phone")
     with c6:
-        only_web = st.checkbox("🌐 Site uniquement", key="f_web")
+        st.checkbox("🌐 Site uniquement", key="f_web")
     with c7:
-        only_no_details = st.checkbox("Sans coordonnées (à scraper)", key="f_no_details")
+        st.checkbox("Sans coordonnées (à scraper)", key="f_no_details")
 
     # Filtrage
-    _save_filter_state()
     filtered = vignerons
-    if search:
-        q = search.lower()
+    if st.session_state.f_search:
+        q = st.session_state.f_search.lower()
         filtered = [v for v in filtered if any(q in str(val).lower() for val in v.values())]
-    if region_f != "Toutes régions":
-        filtered = [v for v in filtered if v.get("region", "").lower() == region_f.lower()]
-    if dept_f != "Tous depts":
-        filtered = [v for v in filtered if v.get("departement", "") == dept_f]
-    if statut_f != "Tous statuts":
-        filtered = [v for v in filtered if v.get("statut") == statut_f]
-    if only_phone:
+    if st.session_state.f_region != "Toutes régions":
+        filtered = [v for v in filtered if v.get("region", "").lower() == st.session_state.f_region.lower()]
+    if st.session_state.f_dept != "Tous depts":
+        filtered = [v for v in filtered if v.get("departement", "") == st.session_state.f_dept]
+    if st.session_state.f_statut != "Tous statuts":
+        filtered = [v for v in filtered if v.get("statut") == st.session_state.f_statut]
+    if st.session_state.f_phone:
         filtered = [v for v in filtered if v.get("telephone")]
-    if only_web:
+    if st.session_state.f_web:
         filtered = [v for v in filtered if v.get("site_web")]
-    if only_no_details:
+    if st.session_state.f_no_details:
         filtered = [v for v in filtered if not v.get("details_scrapped_at")]
 
     # ── Métriques ──
