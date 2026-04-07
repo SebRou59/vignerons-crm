@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import db
-from supabase_client import get_client, is_scraping_enabled
+from supabase_client import get_client, is_scraping_enabled, refresh_auth
 
 # Scraping uniquement si activé (mode local)
 if is_scraping_enabled():
@@ -215,6 +215,9 @@ def _sidebar_scraping():
     if st.button("🔍 Lancer le scraping", type="primary"):
         _run_scraping(max_pages, selected_region, fetch_details)
 
+    if st.button("👤 Récupérer les noms producteurs", type="secondary"):
+        _run_scraping_noms()
+
     st.divider()
     st.text_input("👤 Votre nom (pour les interactions)", key="auteur")
 
@@ -256,7 +259,12 @@ def _scrape_coordonnees(urls: list[str]) -> tuple[int, int]:
             f"✅ {counters['tel']} tél · {counters['mail']} emails"
         )
 
+    _refresh_counter = {"n": 0}
+
     def on_each(url, result):
+        _refresh_counter["n"] += 1
+        if _refresh_counter["n"] % 50 == 0:
+            refresh_auth()
         db.update_details(url, result)
         if not result.get("erreur"):
             if result.get("telephone"):
@@ -283,6 +291,48 @@ def _scrape_coordonnees(urls: list[str]) -> tuple[int, int]:
     )
     st.cache_data.clear()
     return counters["tel"], counters["mail"]
+
+
+def _run_scraping_noms():
+    """Passe légère : scrape uniquement le nom_producteur sur toutes les fiches déjà en base."""
+    all_db = db.get_all_vignerons()
+    urls = [v["url_fiche"] for v in all_db if v.get("url_fiche")]
+    if not urls:
+        st.warning("Aucune fiche en base.")
+        return
+
+    total = len(urls)
+    status_box = st.empty()
+    bar = st.progress(0)
+    done = 0
+
+    def on_progress(d, _):
+        nonlocal done
+        done = d
+        bar.progress(d / total)
+        status_box.info(f"👤 **{d} / {total}** fiches traitées")
+
+    _refresh_counter = {"n": 0}
+
+    def on_each(url, result):
+        _refresh_counter["n"] += 1
+        if _refresh_counter["n"] % 50 == 0:
+            refresh_auth()
+        nom = result.get("nom_producteur")
+        if nom:
+            db.update_nom_producteur(url, nom)
+
+    scrape_producer_details_batch(
+        urls,
+        progress_callback=on_progress,
+        item_callback=on_each,
+        max_workers=MAX_WORKERS,
+    )
+    bar.progress(1.0)
+    status_box.success(f"✅ Noms producteurs mis à jour sur {total} fiches.")
+    st.cache_data.clear()
+    time.sleep(1)
+    st.rerun()
 
 
 def _run_scraping(max_pages, selected_region, fetch_details):
@@ -317,9 +367,12 @@ def _run_scraping(max_pages, selected_region, fetch_details):
 
     if fetch_details:
         all_db = db.get_all_vignerons()
+        region_filter = selected_region.replace("_", " ").title() if selected_region else None
         urls_todo = [
             v["url_fiche"] for v in all_db
-            if v.get("url_fiche") and not v.get("details_scrapped_at")
+            if v.get("url_fiche")
+            and not v.get("details_scrapped_at")
+            and (not region_filter or v.get("region", "").lower() == region_filter.lower())
         ]
         if urls_todo:
             _scrape_coordonnees(urls_todo)
@@ -403,17 +456,14 @@ def render_list():
     m5.metric("🔴 Refus",       sum(1 for v in filtered if v.get("statut") == "refus"))
 
     # ── Tableau ──
-    st.caption(
-        f"**{len(filtered)}** producteur(s) · "
-        "☑ Cochez une ou plusieurs lignes pour charger les coordonnées · "
-        "Cochez une seule ligne pour ouvrir la fiche"
-    )
+    st.caption(f"**{len(filtered)}** producteur(s)")
 
     rows = []
     for v in filtered:
         rows.append({
             "Statut":               f"{STATUT_ICON.get(v.get('statut','prospect'), '⚪')} {(v.get('statut') or 'prospect').capitalize()}",
             "Nom":                  v.get("nom", ""),
+            "Producteur":           v.get("nom_producteur", ""),
             "Région":               v.get("region", ""),
             "Commune":              v.get("commune", ""),
             "Téléphone":            v.get("telephone", ""),
@@ -514,23 +564,28 @@ def render_fiche():
     v_fresh = next((x for x in all_v if x["id"] == v["id"]), v)
     vigneron_id = v_fresh["id"]
 
-    # ── Navigation ──
-    if st.button("← Retour à la liste"):
-        st.session_state.page = "list"
-        st.session_state.selected_vigneron = None
-        st.rerun()
-
-    st.title(f"🍾 {v_fresh.get('nom', '')}")
-
-    # ── Statut ──
-    col_st, col_btn = st.columns([2, 4])
-    with col_st:
+    # ── Header compact : retour | titre + producteur | statut ──
+    h1, h2, h3 = st.columns([1, 4, 2])
+    with h1:
+        st.markdown("<div style='padding-top:6px'></div>", unsafe_allow_html=True)
+        if st.button("← Liste", use_container_width=True):
+            st.session_state.page = "list"
+            st.session_state.selected_vigneron = None
+            st.rerun()
+    with h2:
+        nom_producteur = v_fresh.get("nom_producteur", "")
+        st.markdown(
+            f"### 🍾 {v_fresh.get('nom', '')}"
+            + (f"<br><span style='font-size:.85rem;color:gray'>👤 {nom_producteur}</span>" if nom_producteur else ""),
+            unsafe_allow_html=True,
+        )
+    with h3:
         current_statut = v_fresh.get("statut") or "prospect"
         new_statut = st.selectbox(
-            "Statut",
-            STATUTS,
+            "Statut", STATUTS,
             index=STATUTS.index(current_statut),
             format_func=_statut_label,
+            label_visibility="collapsed",
         )
         if new_statut != current_statut:
             db.update_statut(vigneron_id, new_statut)
@@ -540,19 +595,9 @@ def render_fiche():
 
     col_info, col_inter = st.columns([2, 3])
 
-    # ── Colonne gauche : coordonnées ──
+    # ── Colonne gauche : infos + coordonnées ──
     with col_info:
-        st.subheader("📋 Informations")
-        for label, key in [
-            ("Région", "region"), ("Appellation", "appellation"),
-            ("Commune", "commune"), ("Adresse", "adresse_complete"),
-            ("Couleurs", "couleurs"), ("Nb vins", "nb_vins"),
-        ]:
-            val = v_fresh.get(key)
-            if val:
-                st.markdown(f"**{label}** : {val}")
-
-        st.subheader("📞 Coordonnées")
+        # Coordonnées en priorité
         tel = v_fresh.get("telephone")
         mob = v_fresh.get("telephone_mobile")
         mail = v_fresh.get("email")
@@ -562,20 +607,37 @@ def render_fiche():
 
         if tel:
             clean = tel.replace(" ", "").replace(".", "")
-            st.markdown(f"📞 **Tél. fixe** : [{tel}](tel:{clean})")
+            st.markdown(f"📞 [{tel}](tel:{clean})")
         if mob:
             clean_m = mob.replace(" ", "").replace(".", "")
-            st.markdown(f"📱 **Mobile** : [{mob}](tel:{clean_m})")
+            st.markdown(f"📱 [{mob}](tel:{clean_m})")
         if mail:
-            st.markdown(f"📧 **Email** : [{mail}](mailto:{mail})")
+            st.markdown(f"📧 [{mail}](mailto:{mail})")
         if web:
-            st.markdown(f"🌐 **Site web** : [{web}]({web})")
-        if fb:
-            st.markdown(f"[Facebook]({fb})")
-        if ig:
-            st.markdown(f"[Instagram]({ig})")
+            st.markdown(f"🌐 [{web}]({web})")
+        if fb or ig:
+            links = []
+            if fb:
+                links.append(f"[Facebook]({fb})")
+            if ig:
+                links.append(f"[Instagram]({ig})")
+            st.markdown("  ·  ".join(links))
         if not any([tel, mob, mail, web]):
             st.caption("Aucune coordonnée — lancez le scraping des fiches.")
+
+        st.divider()
+
+        # Infos secondaires
+        for label, key in [
+            ("Région", "region"), ("Appellation", "appellation"),
+            ("Commune", "commune"), ("Couleurs", "couleurs"), ("Nb vins", "nb_vins"),
+        ]:
+            val = v_fresh.get(key)
+            if val:
+                st.caption(f"**{label}** : {val}")
+
+        if v_fresh.get("adresse_complete"):
+            st.caption(f"📍 {v_fresh['adresse_complete']}")
 
         if v_fresh.get("url_fiche"):
             st.markdown(f"[🔗 Fiche sur le site]({v_fresh['url_fiche']})")
@@ -584,13 +646,11 @@ def render_fiche():
             with st.expander("📄 Description"):
                 st.write(v_fresh["description"])
 
-    # ── Colonne droite : interactions ──
+    # ── Colonne droite : formulaire en haut, historique scrollable ──
     with col_inter:
-        st.subheader("🗓️ Interactions")
-
         # Formulaire d'ajout
         with st.form("add_interaction", clear_on_submit=True):
-            fi1, fi2 = st.columns([1, 1])
+            fi1, fi2, fi3 = st.columns([2, 2, 2])
             with fi1:
                 inter_type = st.selectbox(
                     "Type", TYPES_INTERACTION,
@@ -598,13 +658,14 @@ def render_fiche():
                 )
             with fi2:
                 inter_date = st.date_input("Date", value=date.today())
-            inter_notes = st.text_area("Notes", height=80, placeholder="Résumé de l'échange…")
-            inter_auteur = st.text_input(
-                "Auteur",
-                value=st.session_state.get("auteur", ""),
-                placeholder="Votre nom",
-            )
-            submitted = st.form_submit_button("➕ Ajouter l'interaction", type="primary")
+            with fi3:
+                inter_auteur = st.text_input(
+                    "Auteur",
+                    value=st.session_state.get("auteur", ""),
+                    placeholder="Votre nom",
+                )
+            inter_notes = st.text_area("Notes", height=60, placeholder="Résumé de l'échange…")
+            submitted = st.form_submit_button("➕ Ajouter", type="primary", use_container_width=True)
             if submitted:
                 if not inter_auteur.strip():
                     st.warning("Indiquez votre nom.")
@@ -619,11 +680,18 @@ def render_fiche():
                     st.session_state.auteur = inter_auteur.strip()
                     _refresh()
 
-        # Historique
+        st.caption("🗓️ **Historique**")
+
+        # Historique dans un conteneur scrollable
         interactions = load_interactions(vigneron_id)
         if not interactions:
             st.caption("Aucune interaction enregistrée.")
         else:
+            scroll_css = (
+                "<style>.inter-scroll{max-height:340px;overflow-y:auto;}</style>"
+                "<div class='inter-scroll'>"
+            )
+            st.markdown(scroll_css, unsafe_allow_html=True)
             for inter in interactions:
                 icon = TYPE_ICON.get(inter.get("type", ""), "📝")
                 dt = _fmt_date(inter.get("date"))
@@ -632,7 +700,7 @@ def render_fiche():
                 notes = inter.get("notes") or ""
 
                 with st.container(border=True):
-                    h1, h2 = st.columns([4, 1])
+                    h1, h2 = st.columns([5, 1])
                     with h1:
                         st.markdown(
                             f"{icon} **{type_label}** · {dt}"
@@ -644,6 +712,7 @@ def render_fiche():
                         if st.button("🗑️", key=f"del_{inter['id']}", help="Supprimer"):
                             db.delete_interaction(inter["id"], vigneron_id)
                             _refresh()
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ──────────────────────────────────────────────

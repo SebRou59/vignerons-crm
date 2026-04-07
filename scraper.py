@@ -311,6 +311,18 @@ def _parse_detail_html(html: str, url: str) -> dict:
     if m:
         info["nom_fiche"] = m.group(1).strip()
 
+    # ── Nom du producteur (ul.winemaker-profile__names) ──
+    m_owner = re.search(
+        r'<ul[^>]*class=["\'][^"\']*winemaker-profile__names[^"\']*["\'][^>]*>(.*?)</ul>',
+        main_html, re.DOTALL
+    )
+    if m_owner:
+        texts = re.findall(r'<li[^>]*>(.*?)</li>', m_owner.group(1), re.DOTALL)
+        parts = [re.sub(r'<[^>]+>', '', t).strip() for t in texts]
+        parts = [p for p in parts if p]
+        if parts:
+            info["nom_producteur"] = ", ".join(parts)
+
     # ── Téléphone (fixe et mobile) via les blocs phoneNumber / cellPhoneNumber ──
     # Structure : <p id="phoneNumber|cellPhoneNumber"><span>XX XX XX XX XX</span>...
     for phone_id, key in [("phoneNumber", "telephone"), ("cellPhoneNumber", "telephone_mobile")]:

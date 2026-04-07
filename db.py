@@ -39,6 +39,8 @@ def update_details(url_fiche: str, details: dict) -> None:
         "description":        details.get("description", "") or "",
         "details_scrapped_at": _now(),
     }
+    if details.get("nom_producteur"):
+        row["nom_producteur"] = details["nom_producteur"]
     client.table("vignerons").update(row).eq("url_fiche", url_fiche).execute()
 
 
@@ -60,6 +62,12 @@ def get_all_vignerons() -> list[dict]:
             break
         offset += PAGE_SIZE
     return all_data
+
+
+def update_nom_producteur(url_fiche: str, nom_producteur: str) -> None:
+    """Met à jour uniquement le nom du producteur."""
+    client = get_client()
+    client.table("vignerons").update({"nom_producteur": nom_producteur}).eq("url_fiche", url_fiche).execute()
 
 
 def update_statut(vigneron_id: str, statut: str) -> None:
