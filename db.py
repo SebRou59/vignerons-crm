@@ -75,6 +75,44 @@ def update_statut(vigneron_id: str, statut: str) -> None:
     client.table("vignerons").update({"statut": statut}).eq("id", vigneron_id).execute()
 
 
+def add_prospect(data: dict) -> str:
+    """
+    Crée un vigneron manuellement (prospect sans scraping).
+    Retourne l'id généré par Supabase.
+    data doit contenir au minimum : nom
+    """
+    import re
+    import uuid
+
+    nom = data.get("nom", "").strip()
+    # Générer un slug unique à partir du nom
+    slug_base = re.sub(r"[^a-z0-9]+", "-", nom.lower()).strip("-")
+    slug = f"{slug_base}-{uuid.uuid4().hex[:8]}"
+
+    row = {
+        "slug":             slug,
+        "nom":              nom,
+        "nom_producteur":   data.get("nom_producteur", "") or "",
+        "region":           data.get("region", "") or "",
+        "appellation":      data.get("appellation", "") or "",
+        "commune":          data.get("commune", "") or "",
+        "code_postal":      data.get("code_postal", "") or "",
+        "departement":      data.get("departement", "") or "",
+        "adresse_complete": data.get("adresse_complete", "") or "",
+        "telephone":        data.get("telephone", "") or "",
+        "telephone_mobile": data.get("telephone_mobile", "") or "",
+        "email":            data.get("email", "") or "",
+        "site_web":         data.get("site_web", "") or "",
+        "facebook":         data.get("facebook", "") or "",
+        "instagram":        data.get("instagram", "") or "",
+        "statut":           data.get("statut", "prospect"),
+        "details_scrapped_at": _now(),  # marquer comme rempli manuellement
+    }
+    client = get_client()
+    resp = client.table("vignerons").insert(row).execute()
+    return resp.data[0]["id"]
+
+
 # ──────────────────────────────────────────────
 # Interactions
 # ──────────────────────────────────────────────

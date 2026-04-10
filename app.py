@@ -109,6 +109,7 @@ def _init_state():
         "f_web":    False,
         "f_no_details": False,
         "last_viewed_id": None,
+        "prospect_form_error": "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -215,7 +216,9 @@ def _sidebar_scraping():
     if st.button("🔍 Lancer le scraping", type="primary"):
         _run_scraping(max_pages, selected_region, fetch_details)
 
-    if st.button("👤 Récupérer les noms producteurs", type="secondary"):
+    all_v = load_vignerons()
+    sans_nom = sum(1 for v in all_v if not v.get("nom_producteur"))
+    if st.button(f"👤 Récupérer les noms producteurs ({sans_nom} fiches)", type="secondary"):
         _run_scraping_noms()
 
     st.divider()
@@ -296,7 +299,7 @@ def _scrape_coordonnees(urls: list[str]) -> tuple[int, int]:
 def _run_scraping_noms():
     """Passe légère : scrape uniquement le nom_producteur sur toutes les fiches déjà en base."""
     all_db = db.get_all_vignerons()
-    urls = [v["url_fiche"] for v in all_db if v.get("url_fiche")]
+    urls = [v["url_fiche"] for v in all_db if v.get("url_fiche") and not v.get("nom_producteur")]
     if not urls:
         st.warning("Aucune fiche en base.")
         return
@@ -389,7 +392,14 @@ def render_list():
     with st.sidebar:
         _sidebar_scraping()
 
-    st.title("🍷 Vignerons Indépendants — CRM")
+    col_title, col_btn = st.columns([5, 1])
+    with col_title:
+        st.title("🍷 Vignerons Indépendants — CRM")
+    with col_btn:
+        st.markdown("<div style='padding-top:14px'></div>", unsafe_allow_html=True)
+        if st.button("➕ Nouveau prospect", type="primary", use_container_width=True):
+            st.session_state.page = "add_prospect"
+            st.rerun()
 
     vignerons = load_vignerons()
     if not vignerons:
@@ -716,9 +726,122 @@ def render_fiche():
 
 
 # ──────────────────────────────────────────────
+# Page : Nouveau prospect
+# ──────────────────────────────────────────────
+def render_add_prospect():
+    with st.sidebar:
+        _sidebar_scraping()
+
+    h1, h2 = st.columns([1, 6])
+    with h1:
+        st.markdown("<div style='padding-top:6px'></div>", unsafe_allow_html=True)
+        if st.button("← Liste", use_container_width=True):
+            st.session_state.page = "list"
+            st.rerun()
+    with h2:
+        st.markdown("### ➕ Nouveau prospect")
+
+    st.divider()
+
+    all_v = load_vignerons()
+    regions_existantes = sorted({v.get("region", "") for v in all_v if v.get("region")})
+
+    with st.form("form_add_prospect", clear_on_submit=False):
+        st.markdown("#### Domaine")
+        c1, c2 = st.columns(2)
+        with c1:
+            nom = st.text_input("Nom du domaine *", placeholder="Ex : Domaine des Terres Rouges")
+        with c2:
+            nom_producteur = st.text_input("Nom du producteur", placeholder="Ex : Jean Dupont")
+
+        st.markdown("#### Coordonnées")
+        c3, c4 = st.columns(2)
+        with c3:
+            telephone = st.text_input("Téléphone fixe", placeholder="03 89 XX XX XX")
+            email = st.text_input("Email", placeholder="contact@domaine.fr")
+        with c4:
+            telephone_mobile = st.text_input("Téléphone mobile", placeholder="06 XX XX XX XX")
+            site_web = st.text_input("Site web", placeholder="https://www.domaine.fr")
+
+        c5, c6 = st.columns(2)
+        with c5:
+            facebook = st.text_input("Facebook", placeholder="https://facebook.com/…")
+        with c6:
+            instagram = st.text_input("Instagram", placeholder="https://instagram.com/…")
+
+        st.markdown("#### Localisation")
+        c7, c8, c9 = st.columns(3)
+        with c7:
+            region_options = [""] + regions_existantes + ["Autre…"]
+            region_select = st.selectbox("Région", region_options, format_func=lambda x: x if x else "— Choisir —")
+            if region_select == "Autre…":
+                region = st.text_input("Préciser la région")
+            else:
+                region = region_select
+        with c8:
+            appellation = st.text_input("Appellation", placeholder="Ex : Alsace Grand Cru")
+        with c9:
+            commune = st.text_input("Commune", placeholder="Ex : Ribeauvillé")
+
+        c10, c11 = st.columns(2)
+        with c10:
+            code_postal = st.text_input("Code postal", placeholder="68150")
+        with c11:
+            departement = st.text_input("Département", placeholder="Haut-Rhin")
+
+        adresse_complete = st.text_input("Adresse complète", placeholder="12 rue des Vignes, 68150 Ribeauvillé")
+
+        st.markdown("#### CRM")
+        statut = st.selectbox(
+            "Statut initial",
+            STATUTS,
+            index=0,
+            format_func=_statut_label,
+        )
+
+        st.divider()
+        submitted = st.form_submit_button("💾 Créer le prospect", type="primary", use_container_width=True)
+
+    if submitted:
+        if not nom.strip():
+            st.error("Le nom du domaine est obligatoire.")
+        else:
+            new_id = db.add_prospect({
+                "nom":              nom.strip(),
+                "nom_producteur":   nom_producteur.strip(),
+                "telephone":        telephone.strip(),
+                "telephone_mobile": telephone_mobile.strip(),
+                "email":            email.strip(),
+                "site_web":         site_web.strip(),
+                "facebook":         facebook.strip(),
+                "instagram":        instagram.strip(),
+                "region":           region.strip(),
+                "appellation":      appellation.strip(),
+                "commune":          commune.strip(),
+                "code_postal":      code_postal.strip(),
+                "departement":      departement.strip(),
+                "adresse_complete": adresse_complete.strip(),
+                "statut":           statut,
+            })
+            st.cache_data.clear()
+            # Ouvrir directement la fiche du nouveau prospect
+            all_fresh = db.get_all_vignerons()
+            new_v = next((v for v in all_fresh if v["id"] == new_id), None)
+            if new_v:
+                st.session_state.selected_vigneron = new_v
+                st.session_state.last_viewed_id = new_id
+                st.session_state.page = "fiche"
+            else:
+                st.session_state.page = "list"
+            st.rerun()
+
+
+# ──────────────────────────────────────────────
 # Routeur principal
 # ──────────────────────────────────────────────
 if st.session_state.page == "fiche" and st.session_state.selected_vigneron:
     render_fiche()
+elif st.session_state.page == "add_prospect":
+    render_add_prospect()
 else:
     render_list()
