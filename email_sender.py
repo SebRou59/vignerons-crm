@@ -1,45 +1,40 @@
 """
-Envoi SMTP pour la campagne email FIDEwine.
+Envoi via l'API Brevo v4 (brevo-python >= 4.0) pour la campagne email FIDEwine.
 
 Configuration dans .streamlit/secrets.toml :
-  [smtp]
-  host     = "smtp.gmail.com"
-  port     = 587
-  user     = "votre@email.com"
-  password = "mot_de_passe_application"
+  [brevo]
+  api_key    = "xkeysib-..."           # Brevo > SMTP & API > Clés API
+  from_email = "contact@fidewine.com"  # expéditeur vérifié dans Brevo
+  from_name  = "FIDEwine"              # nom par défaut (écrasé au moment de l'envoi)
 
-Ou via variables d'environnement : SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD.
+Ou via variables d'environnement : BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME.
 """
 
 import os
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 
-def _get_smtp_config() -> dict | None:
-    """Lit la configuration SMTP depuis st.secrets ou l'environnement."""
+def _get_config() -> dict | None:
+    """Lit la configuration Brevo depuis st.secrets ou l'environnement."""
     try:
         import streamlit as st
-        smtp = st.secrets.get("smtp", {})
-        host = smtp.get("host") or os.environ.get("SMTP_HOST", "")
-        port = int(smtp.get("port") or os.environ.get("SMTP_PORT", 587))
-        user = smtp.get("user") or os.environ.get("SMTP_USER", "")
-        pwd  = smtp.get("password") or os.environ.get("SMTP_PASSWORD", "")
-        if host and user and pwd:
-            return {"host": host, "port": port, "user": user, "password": pwd}
+        b = st.secrets.get("brevo", {})
+        api_key    = b.get("api_key")    or os.environ.get("BREVO_API_KEY", "")
+        from_email = b.get("from_email") or os.environ.get("BREVO_FROM_EMAIL", "")
+        from_name  = b.get("from_name")  or os.environ.get("BREVO_FROM_NAME", "FIDEwine")
+        if api_key and from_email:
+            return {"api_key": api_key, "from_email": from_email, "from_name": from_name}
     except Exception:
         pass
     return None
 
 
 def is_smtp_configured() -> bool:
-    return _get_smtp_config() is not None
+    return _get_config() is not None
 
 
 def get_smtp_user() -> str:
-    cfg = _get_smtp_config()
-    return cfg["user"] if cfg else ""
+    cfg = _get_config()
+    return cfg["from_email"] if cfg else ""
 
 
 def send_email(
@@ -49,36 +44,35 @@ def send_email(
     from_name: str = "FIDEwine",
 ) -> tuple[bool, str]:
     """
-    Envoie un email HTML via SMTP.
-    Retourne (succes, message_erreur).
+    Envoie un email HTML via l'API transactionnelle Brevo (v4).
+    from_name : nom affiché de l'expéditeur (ex : "Sébastien Roud").
+    Retourne (succès, message_erreur).
     """
-    cfg = _get_smtp_config()
+    cfg = _get_config()
     if not cfg:
-        return False, "SMTP non configuré"
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"{from_name} <{cfg['user']}>"
-    msg["To"]      = to_email
-    msg["Reply-To"] = cfg["user"]
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+        return False, "Brevo non configuré (clé API manquante dans secrets.toml)"
 
     try:
-        if cfg["port"] == 465:
-            with smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=15) as srv:
-                srv.login(cfg["user"], cfg["password"])
-                srv.send_message(msg)
-        else:
-            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as srv:
-                srv.ehlo()
-                srv.starttls()
-                srv.ehlo()
-                srv.login(cfg["user"], cfg["password"])
-                srv.send_message(msg)
+        import brevo
+
+        client = brevo.Brevo(api_key=cfg["api_key"])
+        client.transactional_emails.send_transac_email(
+            sender=brevo.SendTransacEmailRequestSender(
+                name=from_name,
+                email=cfg["from_email"],
+            ),
+            to=[brevo.SendTransacEmailRequestToItem(email=to_email)],
+            reply_to=brevo.SendTransacEmailRequestReplyTo(email=cfg["from_email"]),
+            subject=subject,
+            html_content=html_body,
+        )
         return True, ""
-    except smtplib.SMTPAuthenticationError:
-        return False, "Erreur d'authentification SMTP"
-    except smtplib.SMTPRecipientsRefused:
-        return False, f"Adresse refusée : {to_email}"
+
+    except ImportError:
+        return False, "Package 'brevo-python' manquant — lancez : pip install brevo-python"
     except Exception as exc:
-        return False, str(exc)[:100]
+        # Extraire le message d'erreur Brevo si disponible dans le corps de la réponse
+        msg = str(exc)
+        import re
+        m = re.search(r'"message"\s*:\s*"([^"]+)"', msg)
+        return False, (m.group(1) if m else msg[:150])

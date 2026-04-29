@@ -3,3 +3,4 @@ pandas>=1.4
 requests>=2.28
 httpx>=0.25
 supabase>=2.0
+brevo-python>=4.0
