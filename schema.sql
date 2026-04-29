@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS vignerons (
     adresse_complete          TEXT,
     couleurs                  TEXT,
     nb_vins                   INTEGER,
-    a_email                   BOOLEAN DEFAULT FALSE,
+    a_email                   BOOLEAN DEFAULT FALSE,cd..
     latitude                  DOUBLE PRECISION,
     longitude                 DOUBLE PRECISION,
     url_fiche                 TEXT,
@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS vignerons (
     instagram                 TEXT,
     description               TEXT,
     details_scrapped_at       TIMESTAMPTZ,
+
+    -- Données producteur (enrichissement scraping ou saisie manuelle)
+    nom_producteur            TEXT,
 
     -- CRM
     statut                    TEXT DEFAULT 'prospect'

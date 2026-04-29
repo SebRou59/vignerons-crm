@@ -421,6 +421,132 @@ def _parse_detail_html(html: str, url: str) -> dict:
 
 
 # ──────────────────────────────────────────────
+# Scraping email depuis le site propre du producteur
+# ──────────────────────────────────────────────
+
+_EMAIL_RE = re.compile(
+    r'\b([a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]{1,253}\.[a-zA-Z]{2,6})\b'
+)
+
+_EXCLUDED_EMAIL_HOSTS = {
+    "sentry.io", "w3.org", "schema.org", "cloudflare.com",
+    "google-analytics.com", "googletagmanager.com", "doubleclick.net",
+    "facebook.com", "instagram.com", "twitter.com", "youtube.com",
+    "vignerons-independants.com",
+}
+
+_CONTACT_HREF_RE = re.compile(
+    r'href=["\']([^"\'#]*(?:contact|coordonnee|nous-contacter|contactez|joindre|reach)[^"\']*)["\']',
+    re.IGNORECASE,
+)
+
+
+def _extract_emails_from_html(html: str) -> list[str]:
+    """Extrait les emails depuis le HTML. Priorité aux mailto:, fallback texte brut."""
+    found: list[str] = []
+
+    # 1. mailto: liens — le plus fiable
+    mailtos = re.findall(r'href=["\']mailto:([^"\'?&\s<]+)["\']', html)
+    for e in mailtos:
+        e = e.strip().lower().rstrip(".,;)")
+        if "@" not in e:
+            continue
+        if any(x in e for x in _EXCLUDED_EMAIL_HOSTS):
+            continue
+        if e not in found:
+            found.append(e)
+
+    if found:
+        return found
+
+    # 2. Emails en texte visible (si aucun mailto: trouvé)
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&[a-z]+;", " ", text)
+    for e in _EMAIL_RE.findall(text):
+        e = e.lower().strip()
+        if any(x in e for x in _EXCLUDED_EMAIL_HOSTS):
+            continue
+        if e not in found:
+            found.append(e)
+
+    return found
+
+
+def scrape_email_from_website(site_url: str) -> str | None:
+    """
+    Cherche un email de contact sur le site propre du producteur.
+    Stratégie :
+      1. Page d'accueil (mailto: puis texte)
+      2. Premier lien « contact » trouvé sur l'accueil
+    Retourne le premier email pertinent ou None.
+    """
+    if not site_url or not site_url.startswith("http"):
+        return None
+
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+        "Accept": "text/html,application/xhtml+xml,*/*",
+        "Accept-Language": "fr-FR,fr;q=0.9",
+    })
+
+    try:
+        r = s.get(site_url, timeout=(5, 12), allow_redirects=True)
+        r.raise_for_status()
+        html = r.text
+        final_url = r.url
+
+        # Tentative 1 : accueil
+        emails = _extract_emails_from_html(html)
+        if emails:
+            return emails[0]
+
+        # Tentative 2 : page contact
+        contacts = _CONTACT_HREF_RE.findall(html)
+        if not contacts:
+            return None
+        contact_url = urljoin(final_url, contacts[0])
+        if contact_url in (site_url, final_url):
+            return None
+
+        r2 = s.get(contact_url, timeout=(5, 12), allow_redirects=True)
+        r2.raise_for_status()
+        emails2 = _extract_emails_from_html(r2.text)
+        return emails2[0] if emails2 else None
+
+    except Exception:
+        return None
+
+
+def scrape_emails_from_websites_batch(
+    entries: list[dict],
+    progress_callback=None,
+    item_callback=None,
+    max_workers: int = 4,
+) -> None:
+    """
+    Scrape les emails depuis les sites propres des producteurs en parallèle.
+    entries : liste de {"id": str, "url": str, "nom": str}
+    item_callback(entry, email_or_none) appelé après chaque fiche.
+    """
+    total = len(entries)
+    counter = {"n": 0}
+    lock = threading.Lock()
+
+    def _do(entry: dict) -> None:
+        email = scrape_email_from_website(entry["url"])
+        with lock:
+            counter["n"] += 1
+            if progress_callback:
+                progress_callback(counter["n"], total)
+        if item_callback:
+            item_callback(entry, email)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        list(ex.map(_do, entries))
+
+
+# ──────────────────────────────────────────────
 # Compat async (wrappers pour l'ancienne interface)
 # Ces fonctions sont gardées pour compatibilité
 # avec app.py si besoin, mais ne sont plus utilisées.

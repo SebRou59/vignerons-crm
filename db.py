@@ -75,6 +75,11 @@ def update_statut(vigneron_id: str, statut: str) -> None:
     client.table("vignerons").update({"statut": statut}).eq("id", vigneron_id).execute()
 
 
+def update_email(vigneron_id: str, email: str) -> None:
+    """Met à jour l'adresse email d'un vigneron."""
+    get_client().table("vignerons").update({"email": email}).eq("id", vigneron_id).execute()
+
+
 def add_prospect(data: dict) -> str:
     """
     Crée un vigneron manuellement (prospect sans scraping).
@@ -171,6 +176,44 @@ def delete_interaction(interaction_id: str, vigneron_id: str) -> None:
             "derniere_interaction_at":   None,
             "derniere_interaction_type": None,
         }).eq("id", vigneron_id).execute()
+
+
+# ──────────────────────────────────────────────
+# Campagne email
+# ──────────────────────────────────────────────
+
+def record_mail_campagne(vigneron_ids: list[str], auteur: str = "Campagne") -> None:
+    """Loggue l'envoi de la campagne email comme interaction de type 'email'."""
+    now = _now()
+    for vid in vigneron_ids:
+        add_interaction(
+            vigneron_id=vid,
+            type_="email",
+            date_str=now,
+            notes="Email campagne FIDEwine envoyé",
+            auteur=auteur,
+        )
+
+
+def get_email_interaction_map() -> dict[str, str]:
+    """
+    Retourne {vigneron_id: date_du_dernier_email} pour tous les vignerons
+    ayant au moins une interaction de type 'email'.
+    """
+    client = get_client()
+    resp = (
+        client.table("interactions")
+        .select("vigneron_id, date")
+        .eq("type", "email")
+        .order("date", desc=True)
+        .execute()
+    )
+    result: dict[str, str] = {}
+    for row in resp.data:
+        vid = row["vigneron_id"]
+        if vid not in result:   # premier = plus récent (tri desc)
+            result[vid] = row["date"]
+    return result
 
 
 # ──────────────────────────────────────────────

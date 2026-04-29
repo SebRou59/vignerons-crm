@@ -10,6 +10,13 @@ import streamlit as st
 
 import db
 from supabase_client import get_client, is_scraping_enabled, refresh_auth
+from email_template import render_email, SUBJECT as EMAIL_SUBJECT
+try:
+    from email_sender import is_smtp_configured, get_smtp_user, send_email as _smtp_send
+except ImportError:
+    def is_smtp_configured(): return False
+    def get_smtp_user(): return ""
+    def _smtp_send(*a, **kw): return False, "Module manquant"
 
 # Scraping uniquement si activé (mode local)
 if is_scraping_enabled():
@@ -94,6 +101,19 @@ def _current_user_email() -> str:
 # ──────────────────────────────────────────────
 # Session state
 # ──────────────────────────────────────────────
+def _extract_prenom(nom_producteur: str | None) -> str:
+    """Extrait le prénom depuis nom_producteur, avec fallback 'Producteur'."""
+    if not nom_producteur or not nom_producteur.strip():
+        return "Producteur"
+    parts = nom_producteur.strip().split()
+    if not parts:
+        return "Producteur"
+    first = parts[0].rstrip(".")
+    if first.lower() in ("m", "mr", "mme", "dr", "prof"):
+        return parts[1] if len(parts) > 1 else "Producteur"
+    return first
+
+
 def _init_state():
     defaults = {
         "auth_user":  None,
@@ -106,10 +126,18 @@ def _init_state():
         "f_dept":   "Tous depts",
         "f_statut": "Tous statuts",
         "f_phone":  False,
+        "f_email":  False,
         "f_web":    False,
         "f_no_details": False,
+        "f_mail_campagne": "Tous",
         "last_viewed_id": None,
         "prospect_form_error": "",
+        # Campagne email
+        "camp_df_ver":    0,
+        "camp_init_val":  False,
+        "camp_s_prenom_nom": "",
+        "camp_s_region":  "",
+        "camp_s_tel":     "",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -137,6 +165,11 @@ def load_vignerons():
 @st.cache_data(ttl=5)
 def load_interactions(vigneron_id: str):
     return db.get_interactions(vigneron_id)
+
+
+@st.cache_data(ttl=15)
+def load_email_map() -> dict[str, str]:
+    return db.get_email_interaction_map()
 
 
 def _refresh():
@@ -226,6 +259,45 @@ def _sidebar_scraping():
 
 
 MAX_WORKERS = 4
+
+
+def _scrape_emails_websites(entries: list[dict]) -> None:
+    """Scrape les emails depuis les sites propres des producteurs (sélection filtrée)."""
+    from scraper import scrape_emails_from_websites_batch
+
+    total = len(entries)
+    status_box  = st.empty()
+    bar         = st.progress(0)
+    log_box     = st.empty()
+    found_count = {"n": 0}
+    logs: list[str] = []
+
+    def on_progress(done: int, _total: int) -> None:
+        bar.progress(done / total)
+        status_box.info(
+            f"📧 **{done} / {total}** sites traités · **{found_count['n']}** emails trouvés"
+        )
+
+    def on_item(entry: dict, email: str | None) -> None:
+        if email:
+            found_count["n"] += 1
+            db.update_email(entry["id"], email)
+            logs.append(f"✅ {entry['nom']} — {email}")
+        else:
+            logs.append(f"➖ {entry['nom']}")
+        log_box.markdown("\n\n".join(logs[-20:]))
+
+    scrape_emails_from_websites_batch(
+        entries,
+        progress_callback=on_progress,
+        item_callback=on_item,
+        max_workers=MAX_WORKERS,
+    )
+    bar.progress(1.0)
+    status_box.success(
+        f"✅ {total} sites traités · **{found_count['n']}** emails trouvés"
+    )
+    st.cache_data.clear()
 
 
 def _scrape_coordonnees(urls: list[str]) -> tuple[int, int]:
@@ -392,9 +464,14 @@ def render_list():
     with st.sidebar:
         _sidebar_scraping()
 
-    col_title, col_btn = st.columns([5, 1])
+    col_title, col_camp, col_btn = st.columns([4, 1, 1])
     with col_title:
         st.title("🍷 Vignerons Indépendants — CRM")
+    with col_camp:
+        st.markdown("<div style='padding-top:14px'></div>", unsafe_allow_html=True)
+        if st.button("📧 Campagne email", use_container_width=True):
+            st.session_state.page = "campagne_email"
+            st.rerun()
     with col_btn:
         st.markdown("<div style='padding-top:14px'></div>", unsafe_allow_html=True)
         if st.button("➕ Nouveau prospect", type="primary", use_container_width=True):
@@ -428,16 +505,24 @@ def render_list():
         f_statut = st.selectbox("Statut", statut_opts, index=s_idx, label_visibility="collapsed")
         st.session_state.f_statut = f_statut
 
-    c5, c6, c7 = st.columns([1, 1, 4])
+    c5, c6, c7, c8, c9 = st.columns([1, 1, 1, 1, 2])
     with c5:
-        f_phone = st.checkbox("📞 Tél uniquement", value=st.session_state.f_phone)
+        f_phone = st.checkbox("📞 Tél", value=st.session_state.f_phone)
         st.session_state.f_phone = f_phone
     with c6:
-        f_web = st.checkbox("🌐 Site uniquement", value=st.session_state.f_web)
-        st.session_state.f_web = f_web
+        f_email = st.checkbox("📧 Email", value=st.session_state.f_email)
+        st.session_state.f_email = f_email
     with c7:
-        f_no_details = st.checkbox("Sans coordonnées (à scraper)", value=st.session_state.f_no_details)
+        f_web = st.checkbox("🌐 Site web", value=st.session_state.f_web)
+        st.session_state.f_web = f_web
+    with c8:
+        f_no_details = st.checkbox("Sans coordonnées", value=st.session_state.f_no_details)
         st.session_state.f_no_details = f_no_details
+    with c9:
+        mail_opts = ["Tous", "Jamais contactés mail", "Contactés mail"]
+        m_idx = mail_opts.index(st.session_state.f_mail_campagne) if st.session_state.f_mail_campagne in mail_opts else 0
+        f_mail_campagne = st.selectbox("Mail campagne", mail_opts, index=m_idx, label_visibility="collapsed")
+        st.session_state.f_mail_campagne = f_mail_campagne
 
     # Filtrage
     filtered = vignerons
@@ -452,10 +537,18 @@ def render_list():
         filtered = [v for v in filtered if v.get("statut") == f_statut]
     if f_phone:
         filtered = [v for v in filtered if v.get("telephone")]
+    if f_email:
+        filtered = [v for v in filtered if v.get("email")]
     if f_web:
         filtered = [v for v in filtered if v.get("site_web")]
     if f_no_details:
         filtered = [v for v in filtered if not v.get("details_scrapped_at")]
+    if f_mail_campagne != "Tous":
+        email_ids = set(load_email_map().keys())
+        if f_mail_campagne == "Jamais contactés mail":
+            filtered = [v for v in filtered if v["id"] not in email_ids]
+        else:
+            filtered = [v for v in filtered if v["id"] in email_ids]
 
     # ── Métriques ──
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -477,6 +570,7 @@ def render_list():
             "Région":               v.get("region", ""),
             "Commune":              v.get("commune", ""),
             "Téléphone":            v.get("telephone", ""),
+            "Email":                f"mailto:{v['email']}" if v.get("email") else "",
             "Site web":             v.get("site_web", ""),
             "Dernière interaction": f"{TYPE_ICON.get(v.get('derniere_interaction_type',''), '')} {v.get('derniere_interaction_type','') or ''}".strip(),
             "Date":                 _fmt_date(v.get("derniere_interaction_at")),
@@ -492,6 +586,7 @@ def render_list():
         on_select="rerun",
         selection_mode="single-row",
         column_config={
+            "Email":    st.column_config.LinkColumn("Email", display_text="📧 Écrire"),
             "Site web": st.column_config.LinkColumn("Site web", display_text="🌐 Ouvrir"),
         },
     )
@@ -522,14 +617,25 @@ def render_list():
             </script>
             """, height=0)
 
-    # ── Scraping coordonnées sur la sélection ──
+    # ── Actions de scraping sur la sélection filtrée ──
     st.divider()
     urls_sans_details = [v["url_fiche"] for v in filtered if v.get("url_fiche") and not v.get("details_scrapped_at")]
+    entries_sans_email = [
+        {"id": v["id"], "url": v["site_web"], "nom": v.get("nom", "")}
+        for v in filtered
+        if v.get("site_web") and not v.get("email")
+    ]
+
     col_sc1, col_sc2 = st.columns([2, 3])
     with col_sc1:
         st.caption(f"**{len(urls_sans_details)}** fiche(s) sans coordonnées dans la sélection")
         if urls_sans_details and is_scraping_enabled() and st.button(f"📞 Charger les coordonnées ({len(urls_sans_details)} fiches)", type="secondary"):
             _scrape_coordonnees(urls_sans_details)
+            _refresh()
+    with col_sc2:
+        st.caption(f"**{len(entries_sans_email)}** fiche(s) avec site web mais sans email dans la sélection")
+        if entries_sans_email and st.button(f"📧 Chercher emails via sites web ({len(entries_sans_email)} fiches)", type="secondary"):
+            _scrape_emails_websites(entries_sans_email)
             _refresh()
 
     # ── Export CSV ──
@@ -837,11 +943,238 @@ def render_add_prospect():
 
 
 # ──────────────────────────────────────────────
+# Page : Campagne email
+# ──────────────────────────────────────────────
+def render_campagne_email():
+    with st.sidebar:
+        _sidebar_scraping()
+
+    h1, h2 = st.columns([1, 6])
+    with h1:
+        st.markdown("<div style='padding-top:6px'></div>", unsafe_allow_html=True)
+        if st.button("← Liste", use_container_width=True):
+            st.session_state.page = "list"
+            st.rerun()
+    with h2:
+        st.markdown("### 📧 Campagne email")
+
+    smtp_ok = is_smtp_configured()
+    if not smtp_ok:
+        st.info(
+            "SMTP non configuré. Vous pouvez sélectionner les destinataires et **marquer comme envoyé** "
+            "après un envoi manuel, ou configurer SMTP dans `.streamlit/secrets.toml`."
+        )
+
+    st.divider()
+
+    vignerons = load_vignerons()
+
+    # ── Filtres ──
+    cf1, cf2, cf3, cf4, cf5 = st.columns([3, 2, 2, 2, 2])
+    with cf1:
+        camp_search = st.text_input(
+            "Rechercher", key="camp_f_search",
+            label_visibility="collapsed", placeholder="Nom, région…"
+        )
+    with cf2:
+        regions_c = ["Toutes régions"] + sorted({v.get("region", "") for v in vignerons if v.get("region")})
+        camp_region = st.selectbox("Région", regions_c, key="camp_f_region", label_visibility="collapsed")
+    with cf3:
+        statuts_c = ["Tous statuts"] + STATUTS
+        camp_statut = st.selectbox("Statut", statuts_c, key="camp_f_statut", label_visibility="collapsed")
+    with cf4:
+        mail_filter_opts = ["Tous", "Jamais contactés", "Déjà contactés"]
+        camp_mail = st.selectbox("Mail", mail_filter_opts, key="camp_f_mail", label_visibility="collapsed")
+    with cf5:
+        camp_email_only = st.checkbox("Avec email seulement", key="camp_f_email_only", value=True)
+
+    # ── Application des filtres ──
+    email_map = load_email_map()
+    filtered_c = vignerons
+    if camp_search:
+        q = camp_search.lower()
+        filtered_c = [v for v in filtered_c if any(q in str(val).lower() for val in v.values())]
+    if camp_region != "Toutes régions":
+        filtered_c = [v for v in filtered_c if v.get("region", "").lower() == camp_region.lower()]
+    if camp_statut != "Tous statuts":
+        filtered_c = [v for v in filtered_c if v.get("statut") == camp_statut]
+    if camp_mail == "Jamais contactés":
+        filtered_c = [v for v in filtered_c if v["id"] not in email_map]
+    elif camp_mail == "Déjà contactés":
+        filtered_c = [v for v in filtered_c if v["id"] in email_map]
+    if camp_email_only:
+        filtered_c = [v for v in filtered_c if v.get("email")]
+
+    n_avec = sum(1 for v in filtered_c if v.get("email"))
+    n_sans = len(filtered_c) - n_avec
+
+    # ── Boutons de sélection ──
+    cs1, cs2, cs3 = st.columns([1, 1, 6])
+    with cs1:
+        if st.button("✅ Tout sélectionner"):
+            st.session_state.camp_init_val = True
+            st.session_state.camp_df_ver += 1
+    with cs2:
+        if st.button("⬜ Désélectionner"):
+            st.session_state.camp_init_val = False
+            st.session_state.camp_df_ver += 1
+    with cs3:
+        st.caption(f"**{len(filtered_c)}** producteur(s) · {n_avec} avec email · {n_sans} sans email")
+
+    # ── Table de sélection ──
+    filter_hash = hash(tuple(v["id"] for v in filtered_c))
+    editor_key  = f"camp_editor_{filter_hash}_{st.session_state.camp_df_ver}"
+    init_val    = st.session_state.camp_init_val
+
+    rows_c = []
+    for v in filtered_c:
+        has_mail = bool(v.get("email"))
+        rows_c.append({
+            "Envoi":        init_val if has_mail else False,
+            "Email":        v.get("email", ""),
+            "Nom":          v.get("nom", ""),
+            "Producteur":   v.get("nom_producteur", ""),
+            "Région":       v.get("region", ""),
+            "Dernier mail": _fmt_date(email_map.get(v["id"])) or "Jamais",
+        })
+
+    df_c = pd.DataFrame(rows_c)
+
+    if not df_c.empty:
+        edited_c = st.data_editor(
+            df_c,
+            key=editor_key,
+            column_config={
+                "Envoi":        st.column_config.CheckboxColumn("Envoi", default=False),
+                "Email":        st.column_config.TextColumn("Email"),
+                "Nom":          st.column_config.TextColumn("Nom"),
+                "Producteur":   st.column_config.TextColumn("Producteur"),
+                "Région":       st.column_config.TextColumn("Région"),
+                "Dernier mail": st.column_config.TextColumn("Dernier mail"),
+            },
+            disabled=["Email", "Nom", "Producteur", "Région", "Dernier mail"],
+            use_container_width=True,
+            height=350,
+        )
+        selected_c = [filtered_c[i] for i, row in edited_c.iterrows() if row["Envoi"]]
+    else:
+        st.info("Aucun producteur ne correspond aux filtres.")
+        selected_c = []
+
+    n_sel       = len(selected_c)
+    n_sel_email = sum(1 for v in selected_c if v.get("email"))
+
+    st.divider()
+
+    # ── Informations expéditeur + aperçu ──
+    st.markdown("#### Informations expéditeur")
+    col_form, col_prev = st.columns([1, 1])
+
+    with col_form:
+        s_prenom_nom = st.text_input(
+            "Prénom + Nom complet (signature)",
+            key="camp_s_prenom_nom",
+            placeholder="Ex : Sébastien Roud",
+        )
+        s_region = st.text_input(
+            "Votre région (signature)",
+            key="camp_s_region",
+            placeholder="Ex : Alsace",
+        )
+        s_tel = st.text_input(
+            "Votre téléphone",
+            key="camp_s_tel",
+            placeholder="Ex : 06 XX XX XX XX",
+        )
+        st.caption("Le prénom de chaque destinataire est personnalisé automatiquement.")
+
+        if selected_c:
+            st.info(f"**{n_sel}** producteur(s) sélectionné(s) · **{n_sel_email}** avec email")
+
+        cb1, cb2 = st.columns(2)
+        with cb1:
+            send_label = "📧 Envoyer" if smtp_ok else "📧 Envoyer (SMTP requis)"
+            btn_send = st.button(
+                send_label, type="primary", use_container_width=True,
+                disabled=(not smtp_ok or n_sel_email == 0),
+            )
+        with cb2:
+            btn_mark = st.button(
+                "✅ Marquer envoyé", use_container_width=True,
+                disabled=(n_sel == 0),
+                help="Marque les producteurs sélectionnés comme contactés par mail sans envoyer.",
+            )
+
+    with col_prev:
+        prenom_preview = _extract_prenom(selected_c[0].get("nom_producteur")) if selected_c else "[Prénom]"
+        _, html_preview = render_email(
+            prenom=prenom_preview,
+            prenom_nom=s_prenom_nom or "[Prénom Nom]",
+            region=s_region or "[Région]",
+            telephone=s_tel or "[Téléphone]",
+            email_expediteur=get_smtp_user() or "contact@fidewine.com",
+        )
+        with st.expander("Aperçu du mail", expanded=True):
+            st.components.v1.html(html_preview, height=520, scrolling=True)
+
+    # ── Traitement envoi / marquage ──
+    if btn_send or btn_mark:
+        if not s_prenom_nom.strip():
+            st.error("Veuillez renseigner votre prénom et nom.")
+            st.stop()
+
+        auteur = s_prenom_nom.strip()
+
+        if btn_mark:
+            ids_mark = [v["id"] for v in selected_c]
+            db.record_mail_campagne(ids_mark, auteur)
+            st.success(f"✅ {len(ids_mark)} producteur(s) marqué(s) comme contacté(s) par mail.")
+            _refresh()
+
+        elif btn_send and smtp_ok:
+            progress_bar = st.progress(0)
+            ok_ids, fail_list = [], []
+
+            for i, v in enumerate(selected_c):
+                if not v.get("email"):
+                    continue
+                prenom_dest = _extract_prenom(v.get("nom_producteur"))
+                _, html_body = render_email(
+                    prenom=prenom_dest,
+                    prenom_nom=auteur,
+                    region=s_region,
+                    telephone=s_tel,
+                    email_expediteur=get_smtp_user(),
+                )
+                ok, err = _smtp_send(v["email"], EMAIL_SUBJECT, html_body, from_name=auteur)
+                if ok:
+                    ok_ids.append(v["id"])
+                else:
+                    fail_list.append(f"{v.get('nom', v['email'])} ({err})")
+                progress_bar.progress((i + 1) / n_sel_email)
+
+            if ok_ids:
+                db.record_mail_campagne(ok_ids, auteur)
+
+            if fail_list:
+                st.warning(
+                    f"{len(ok_ids)} envoyé(s). Echecs ({len(fail_list)}) : "
+                    + " · ".join(fail_list[:5])
+                )
+            else:
+                st.success(f"✅ {len(ok_ids)} email(s) envoyé(s) avec succès.")
+
+            _refresh()
+
+
+# ──────────────────────────────────────────────
 # Routeur principal
 # ──────────────────────────────────────────────
 if st.session_state.page == "fiche" and st.session_state.selected_vigneron:
     render_fiche()
 elif st.session_state.page == "add_prospect":
     render_add_prospect()
+elif st.session_state.page == "campagne_email":
+    render_campagne_email()
 else:
     render_list()
