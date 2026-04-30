@@ -1183,6 +1183,14 @@ def render_campagne_email():
                 help="Marque les producteurs sélectionnés comme contactés par mail sans envoyer.",
             )
 
+        st.divider()
+        btn_test = st.button(
+            "🧪 Envoyer mail de test",
+            use_container_width=True,
+            disabled=not smtp_ok,
+            help="Envoie le mail aux 4 adresses de test sans toucher à la base.",
+        )
+
     with col_prev:
         prenom_preview = _extract_prenom(selected_c[0].get("nom_producteur")) if selected_c else "[Prénom]"
         _, html_preview = render_email(
@@ -1194,6 +1202,36 @@ def render_campagne_email():
         )
         with st.expander("Aperçu du mail", expanded=True):
             st.components.v1.html(html_preview, height=520, scrolling=True)
+
+    # ── Test envoi ──
+    _TEST_EMAILS = [
+        "sroudie@gmail.com",
+        "sebastien@fidewine.com",
+        "louis@fidewine.com",
+        "ldldg@wanadoo.fr",
+    ]
+    if btn_test:
+        if not s_prenom_nom.strip():
+            st.error("Veuillez renseigner votre prénom et nom avant d'envoyer.")
+            st.stop()
+        _, html_test = render_email(
+            prenom="",
+            prenom_nom=s_prenom_nom.strip(),
+            region=s_region,
+            telephone=s_tel,
+            email_expediteur=get_smtp_user(),
+        )
+        ok_t, fail_t = [], []
+        for addr in _TEST_EMAILS:
+            ok, err = _smtp_send(addr, EMAIL_SUBJECT, html_test, from_name=s_prenom_nom.strip())
+            if ok:
+                ok_t.append(addr)
+            else:
+                fail_t.append(f"{addr} ({err})")
+        if fail_t:
+            st.warning(f"{len(ok_t)} envoyé(s). Échecs : " + " · ".join(fail_t))
+        else:
+            st.success(f"✅ Mail de test envoyé à : {', '.join(ok_t)}")
 
     # ── Traitement envoi / marquage ──
     if btn_send or btn_mark:

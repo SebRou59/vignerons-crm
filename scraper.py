@@ -490,12 +490,21 @@ def _find_secondary_pages(html: str, base_url: str) -> list[str]:
 
 
 def _extract_emails_from_html(html: str) -> list[str]:
-    """Extrait les emails depuis le HTML. Priorité aux mailto:, fallback texte brut."""
+    """
+    Extrait les emails depuis le HTML.
+    Gère : mailto: normaux, percent-encodés (%61%6c...) et entités HTML (&#x61;...).
+    Priorité aux mailto:, fallback texte brut.
+    """
+    import html as _html_mod
+    from urllib.parse import unquote as _unquote
+
     found: list[str] = []
 
-    # 1. mailto: liens — le plus fiable
+    # 1. mailto: liens — décoder percent-encoding ET entités HTML
     mailtos = re.findall(r'href=["\']mailto:([^"\'?&\s<]+)["\']', html)
     for e in mailtos:
+        e = _unquote(e)          # %61%6c... → alexandre
+        e = _html_mod.unescape(e)  # &#x61;... → a  (double protection)
         e = e.strip().lower().rstrip(".,;)")
         if "@" not in e:
             continue
@@ -507,9 +516,9 @@ def _extract_emails_from_html(html: str) -> list[str]:
     if found:
         return found
 
-    # 2. Emails en texte visible (si aucun mailto: trouvé)
-    text = re.sub(r"<[^>]+>", " ", html)
-    text = re.sub(r"&[a-z]+;", " ", text)
+    # 2. Emails en texte visible — décoder les entités avant de scanner
+    text = re.sub(r"<[^>]+>", " ", html)   # supprimer les balises
+    text = _html_mod.unescape(text)         # &#x61; → a, &amp; → &, etc.
     for e in _EMAIL_RE.findall(text):
         e = e.lower().strip()
         if any(x in e for x in _EXCLUDED_EMAIL_HOSTS):

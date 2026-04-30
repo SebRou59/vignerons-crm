@@ -1,13 +1,3 @@
-"""
-Template HTML du mail de campagne FIDEwine.
-Variables : {{PRENOM_NOM}}, {{EMAIL_EXPEDITEUR}}
-"""
-
-import re
-
-SUBJECT = "Votre QR code nutri peut vendre pour vous (démo 15 min)"
-
-TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -117,7 +107,7 @@ TEMPLATE = """\
               <tr>
                 <td style="background-color:#1a1a2e;padding:22px 28px;border-radius:8px;text-align:center;">
                   <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:17px;font-weight:bold;color:#c9a84c;line-height:1.5;">
-                    Le temps d'un café pour vous montrer tout ça en visio.
+                    Je peux vous montrer cela en 15 min lors d&#x27;une visio.
                   </p>
                 </td>
               </tr>
@@ -125,20 +115,20 @@ TEMPLATE = """\
 
             <!-- Disponibilités -->
             <p style="margin:0 0 28px 0;font-size:15px;color:#444444;line-height:1.75;">
-              Un créneau la semaine prochaine pour en parler ?&nbsp;?
+              &#202;tes-vous disponible demain d&#233;but ou fin d&#x27;apr&#232;s-midi, ou pr&#233;f&#233;rez-vous apr&#232;s-demain matin&nbsp;? &#192; votre convenance.
             </p>
 
             <!-- Signature -->
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr>
                 <td valign="top">
-                  <p style="margin:0 0 4px 0;font-weight:bold;color:#1a1a2e;font-size:15px;">{{PRENOM_NOM}}</p>
+                  <p style="margin:0 0 4px 0;font-weight:bold;color:#1a1a2e;font-size:15px;">Louis</p>
                   <p style="margin:0 0 4px 0;color:#666666;font-size:13px;line-height:1.6;">Co-fondateur de FIDEwine &amp; producteur, co-propri&#233;taire &#224; Pomerol</p>
                   <p style="margin:0 0 4px 0;font-size:13px;color:#444444;">
-                    <a href="tel:{{TELEPHONE_RAW}}" style="color:#444444;text-decoration:none;">{{TELEPHONE}}</a>
+                    <a href="tel:+33664530760" style="color:#444444;text-decoration:none;">+33 6 64 53 07 60</a>
                   </p>
                   <p style="margin:0 0 4px 0;font-size:13px;">
-                    <a href="mailto:{{EMAIL_EXPEDITEUR}}" style="color:#444444;text-decoration:none;">{{EMAIL_EXPEDITEUR}}</a>
+                    <a href="mailto:contact@fidewine.com" style="color:#444444;text-decoration:none;">contact@fidewine.com</a>
                   </p>
                   <p style="margin:0;"><a href="https://fidewine.com" style="color:#c9a84c;text-decoration:none;font-size:13px;font-weight:bold;">fidewine.com</a></p>
                 </td>
@@ -152,9 +142,9 @@ TEMPLATE = """\
         <tr>
           <td style="background-color:#eae7e2;padding:16px 32px;border-radius:0 0 12px 12px;text-align:center;">
             <p style="margin:0;color:#999999;font-size:11px;line-height:1.8;">
-              Vous recevez ce message car vous exercez en tant que vigneron.<br>
+              Vous recevez ce message car vous exercez en tant que producteur vigneron ind&#233;pendant.<br>
               Pour ne plus recevoir nos messages, r&#233;pondez &#224; cet email avec l&#x27;objet <em>D&#233;sinscription</em>
-              ou &#233;crivez-nous &#224; <a href="mailto:{{EMAIL_EXPEDITEUR}}" style="color:#aaaaaa;text-decoration:none;">{{EMAIL_EXPEDITEUR}}</a>.
+              ou &#233;crivez-nous &#224; <a href="mailto:contact@fidewine.com" style="color:#aaaaaa;text-decoration:none;">contact@fidewine.com</a>.
             </p>
           </td>
         </tr>
@@ -166,30 +156,3 @@ TEMPLATE = """\
 
 </body>
 </html>
-"""
-
-
-_SENDER_NAME  = "Louis"
-_SENDER_EMAIL = "contact@fidewine.com"
-_SENDER_PHONE = "+33 6 64 53 07 60"
-
-
-def render_email(
-    prenom: str = "",
-    prenom_nom: str = "",
-    region: str = "",
-    telephone: str = "",
-    email_expediteur: str = "",
-) -> tuple[str, str]:
-    """Retourne (sujet, html) avec les variables de l'expéditeur remplacées."""
-    name  = prenom_nom.strip()  or _SENDER_NAME
-    email = email_expediteur.strip() or _SENDER_EMAIL
-    phone = telephone.strip()   or _SENDER_PHONE
-    phone_raw = re.sub(r"[^\d+]", "", phone)   # +33664530760
-
-    html = TEMPLATE
-    html = html.replace("{{PRENOM_NOM}}",     name)
-    html = html.replace("{{EMAIL_EXPEDITEUR}}", email)
-    html = html.replace("{{TELEPHONE}}",      phone)
-    html = html.replace("{{TELEPHONE_RAW}}",  phone_raw)
-    return SUBJECT, html
