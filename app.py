@@ -262,41 +262,50 @@ MAX_WORKERS = 4
 
 
 def _scrape_emails_websites(entries: list[dict]) -> None:
-    """Scrape les emails depuis les sites propres des producteurs (sélection filtrée)."""
-    from scraper import scrape_emails_from_websites_batch
+    """
+    Scrape les emails depuis les sites propres des producteurs.
+    Workers en threads → queue → thread principal Streamlit pour l'UI.
+    """
+    import queue as _q
+    import concurrent.futures
+    from scraper import scrape_email_from_website
 
-    total = len(entries)
-    status_box  = st.empty()
-    bar         = st.progress(0)
-    log_box     = st.empty()
-    found_count = {"n": 0}
+    total      = len(entries)
+    results_q  = _q.Queue()
+    status_box = st.empty()
+    bar        = st.progress(0)
+    log_box    = st.empty()
     logs: list[str] = []
+    found      = 0
 
-    def on_progress(done: int, _total: int) -> None:
-        bar.progress(done / total)
-        status_box.info(
-            f"📧 **{done} / {total}** sites traités · **{found_count['n']}** emails trouvés"
-        )
+    def _worker(entry: dict) -> None:
+        email = scrape_email_from_website(entry["url"])
+        results_q.put((entry, email))
 
-    def on_item(entry: dict, email: str | None) -> None:
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    for e in entries:
+        executor.submit(_worker, e)
+
+    done = 0
+    while done < total:
+        try:
+            entry, email = results_q.get(timeout=30)
+        except _q.Empty:
+            break
+        done += 1
         if email:
-            found_count["n"] += 1
+            found += 1
             db.update_email(entry["id"], email)
             logs.append(f"✅ {entry['nom']} — {email}")
         else:
             logs.append(f"➖ {entry['nom']}")
+        bar.progress(done / total)
+        status_box.info(f"📧 **{done} / {total}** sites traités · **{found}** emails trouvés")
         log_box.markdown("\n\n".join(logs[-20:]))
 
-    scrape_emails_from_websites_batch(
-        entries,
-        progress_callback=on_progress,
-        item_callback=on_item,
-        max_workers=MAX_WORKERS,
-    )
+    executor.shutdown(wait=False)
     bar.progress(1.0)
-    status_box.success(
-        f"✅ {total} sites traités · **{found_count['n']}** emails trouvés"
-    )
+    status_box.success(f"✅ {total} sites traités · **{found}** emails trouvés")
     st.cache_data.clear()
 
 
@@ -634,7 +643,7 @@ def render_list():
             _refresh()
     with col_sc2:
         st.caption(f"**{len(entries_sans_email)}** fiche(s) avec site web mais sans email dans la sélection")
-        if entries_sans_email and st.button(f"📧 Chercher emails via sites web ({len(entries_sans_email)} fiches)", type="secondary"):
+        if entries_sans_email and is_scraping_enabled() and st.button(f"📧 Chercher emails via sites web ({len(entries_sans_email)} fiches)", type="secondary"):
             _scrape_emails_websites(entries_sans_email)
             _refresh()
 

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Python311/python.exe -c \"import ast; ast.parse\\(open\\('c:/Users/sroud/OneDrive - FIDEwine/General/Doc IT/Projets SR/vignerons-scraper/app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c ' *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\sroud\\.claude\\projects\\c--Users-sroud-OneDrive---FIDEwine-General-Doc-IT-Projets-SR-vignerons-scraper\\memory"
+    ]
+  }
+}

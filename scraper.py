@@ -440,6 +440,11 @@ _CONTACT_HREF_RE = re.compile(
     re.IGNORECASE,
 )
 
+_LEGAL_HREF_RE = re.compile(
+    r'href=["\']([^"\'#]*(?:mentions?-?l[eé]gales?|conditions?(?:-de)?-vente|cgv|politique(?:-de)?-confidentialit[eé]|privacy|legal|rgpd)[^"\']*)["\']',
+    re.IGNORECASE,
+)
+
 
 def _extract_emails_from_html(html: str) -> list[str]:
     """Extrait les emails depuis le HTML. Priorité aux mailto:, fallback texte brut."""
@@ -477,7 +482,8 @@ def scrape_email_from_website(site_url: str) -> str | None:
     Cherche un email de contact sur le site propre du producteur.
     Stratégie :
       1. Page d'accueil (mailto: puis texte)
-      2. Premier lien « contact » trouvé sur l'accueil
+      2. Pages secondaires dans l'ordre : contact, mentions légales, CGV,
+         politique de confidentialité (jusqu'à 4 pages, stop au premier email)
     Retourne le premier email pertinent ou None.
     """
     if not site_url or not site_url.startswith("http"):
@@ -501,18 +507,27 @@ def scrape_email_from_website(site_url: str) -> str | None:
         if emails:
             return emails[0]
 
-        # Tentative 2 : page contact
-        contacts = _CONTACT_HREF_RE.findall(html)
-        if not contacts:
-            return None
-        contact_url = urljoin(final_url, contacts[0])
-        if contact_url in (site_url, final_url):
-            return None
+        # Collecter les pages secondaires (contact en premier, puis légales)
+        seen: set[str] = {site_url, final_url}
+        candidates: list[str] = []
+        for href in _CONTACT_HREF_RE.findall(html) + _LEGAL_HREF_RE.findall(html):
+            url = urljoin(final_url, href).split("#")[0]
+            if url not in seen:
+                candidates.append(url)
+                seen.add(url)
 
-        r2 = s.get(contact_url, timeout=(5, 12), allow_redirects=True)
-        r2.raise_for_status()
-        emails2 = _extract_emails_from_html(r2.text)
-        return emails2[0] if emails2 else None
+        # Tentatives sur les pages secondaires (max 4)
+        for page_url in candidates[:4]:
+            try:
+                r2 = s.get(page_url, timeout=(5, 12), allow_redirects=True)
+                r2.raise_for_status()
+                emails2 = _extract_emails_from_html(r2.text)
+                if emails2:
+                    return emails2[0]
+            except Exception:
+                continue
+
+        return None
 
     except Exception:
         return None
