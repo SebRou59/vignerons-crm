@@ -441,7 +441,7 @@ _CONTACT_HREF_RE = re.compile(
 )
 
 _LEGAL_HREF_RE = re.compile(
-    r'href=["\']([^"\'#]*(?:mentions?-?l[eé]gales?|conditions?(?:-de)?-vente|cgv|politique(?:-de)?-confidentialit[eé]|privacy|legal|rgpd)[^"\']*)["\']',
+    r'href=["\']([^"\'#]*(?:mentions?-?l[eé]gales?|conditions?(?:-d[e\']-)?(?:vente|utilisation)|cgu|cgv|politique(?:-de)?-confidentialit[eé]|privacy|legal|rgpd)[^"\']*)["\']',
     re.IGNORECASE,
 )
 
