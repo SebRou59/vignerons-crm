@@ -345,7 +345,8 @@ def _fix_site_webs(entries: list[dict]) -> None:
         original = entry["url"]
         if fixed_url is None:
             broken += 1
-            logs.append(f"❌ {entry['nom']} — `{original}` (inaccessible)")
+            db.update_site_web(entry["id"], "")
+            logs.append(f"❌ {entry['nom']} — `{original}` supprimé (inaccessible)")
         elif fixed_url.rstrip("/") != original.rstrip("/"):
             fixed += 1
             db.update_site_web(entry["id"], fixed_url)

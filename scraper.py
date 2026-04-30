@@ -458,8 +458,12 @@ def _find_secondary_pages(html: str, base_url: str) -> list[str]:
     Trouve les liens vers pages contact et légales dans le HTML.
     Cherche les mots-clés dans l'URL du lien ET dans le texte de l'ancre,
     ce qui couvre les CMS WordPress du type /?page_id=12 avec label "Contact".
+    N'inclut que les pages du même domaine (filtre les liens externes).
     Retourne les URLs contact en premier, puis les légales.
     """
+    from urllib.parse import urlparse as _urlparse
+    base_host = _urlparse(base_url).netloc
+
     contact: list[str] = []
     legal:   list[str] = []
     seen: set[str] = {base_url.rstrip("/"), base_url}
@@ -469,6 +473,8 @@ def _find_secondary_pages(html: str, base_url: str) -> list[str]:
             continue
         url = urljoin(base_url, href).split("#")[0].rstrip("/")
         if url in seen:
+            continue
+        if _urlparse(url).netloc != base_host:
             continue
         seen.add(url)
 
