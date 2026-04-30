@@ -80,6 +80,11 @@ def update_email(vigneron_id: str, email: str) -> None:
     get_client().table("vignerons").update({"email": email}).eq("id", vigneron_id).execute()
 
 
+def update_site_web(vigneron_id: str, site_web: str) -> None:
+    """Met à jour l'URL du site web d'un vigneron."""
+    get_client().table("vignerons").update({"site_web": site_web}).eq("id", vigneron_id).execute()
+
+
 def add_prospect(data: dict) -> str:
     """
     Crée un vigneron manuellement (prospect sans scraping).

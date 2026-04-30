@@ -435,15 +435,52 @@ _EXCLUDED_EMAIL_HOSTS = {
     "vignerons-independants.com",
 }
 
-_CONTACT_HREF_RE = re.compile(
-    r'href=["\']([^"\'#]*(?:contact|coordonnee|nous-contacter|contactez|joindre|reach)[^"\']*)["\']',
+# Regex pour parser les balises <a href="...">texte</a>
+_LINK_RE = re.compile(
+    r'<a\s[^>]*?href=["\']([^"\']*)["\'][^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+_CONTACT_KW = re.compile(
+    r'contact|coordonn[eé]e|nous.?contacter|contactez|joindre|reach',
     re.IGNORECASE,
 )
 
-_LEGAL_HREF_RE = re.compile(
-    r'href=["\']([^"\'#]*(?:mentions?-?l[eé]gales?|conditions?(?:-d[e\']-)?(?:vente|utilisation)|cgu|cgv|politique(?:-de)?-confidentialit[eé]|privacy|legal|rgpd)[^"\']*)["\']',
+_LEGAL_KW = re.compile(
+    r'mentions?.?l[eé]gales?|conditions?.?(?:de.?)?(?:vente|utilisation)|cgu|cgv'
+    r'|politique.?(?:de.?)?confidentialit[eé]|privacy|l[eé]gal(?:es?)?|rgpd',
     re.IGNORECASE,
 )
+
+
+def _find_secondary_pages(html: str, base_url: str) -> list[str]:
+    """
+    Trouve les liens vers pages contact et légales dans le HTML.
+    Cherche les mots-clés dans l'URL du lien ET dans le texte de l'ancre,
+    ce qui couvre les CMS WordPress du type /?page_id=12 avec label "Contact".
+    Retourne les URLs contact en premier, puis les légales.
+    """
+    contact: list[str] = []
+    legal:   list[str] = []
+    seen: set[str] = {base_url.rstrip("/"), base_url}
+
+    for href, raw_text in _LINK_RE.findall(html):
+        if not href or href.startswith(("mailto:", "tel:", "javascript:", "#")):
+            continue
+        url = urljoin(base_url, href).split("#")[0].rstrip("/")
+        if url in seen:
+            continue
+        seen.add(url)
+
+        anchor_text = re.sub(r"<[^>]+>", "", raw_text).strip()
+        target = href + " " + anchor_text  # cherche dans URL + texte visible
+
+        if _CONTACT_KW.search(target):
+            contact.append(url)
+        elif _LEGAL_KW.search(target):
+            legal.append(url)
+
+    return contact + legal
 
 
 def _extract_emails_from_html(html: str) -> list[str]:
@@ -508,13 +545,8 @@ def scrape_email_from_website(site_url: str) -> str | None:
             return emails[0]
 
         # Collecter les pages secondaires (contact en premier, puis légales)
-        seen: set[str] = {site_url, final_url}
-        candidates: list[str] = []
-        for href in _CONTACT_HREF_RE.findall(html) + _LEGAL_HREF_RE.findall(html):
-            url = urljoin(final_url, href).split("#")[0]
-            if url not in seen:
-                candidates.append(url)
-                seen.add(url)
+        # Cherche dans URL ET texte de l'ancre (couvre /?page_id=X avec label "Contact")
+        candidates = _find_secondary_pages(html, final_url)
 
         # Tentatives sur les pages secondaires (max 4)
         for page_url in candidates[:4]:
@@ -559,6 +591,57 @@ def scrape_emails_from_websites_batch(
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
         list(ex.map(_do, entries))
+
+
+# ──────────────────────────────────────────────
+# Validation / correction des URLs de sites web
+# ──────────────────────────────────────────────
+
+def validate_and_fix_url(url: str) -> str | None:
+    """
+    Valide une URL de site web et tente de la corriger si elle est cassée.
+    1. Normalise le protocole (ajoute https:// si absent)
+    2. Essaie les variantes https/http et www/sans-www
+    Retourne l'URL finale (après redirects) si le site répond, None sinon.
+    """
+    if not url or not url.strip():
+        return None
+
+    url = url.strip()
+    if not url.startswith("http"):
+        url = "https://" + url.lstrip("/")
+
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    scheme = parsed.scheme
+    netloc = parsed.netloc
+
+    alt_scheme = "http" if scheme == "https" else "https"
+    alt_netloc = netloc[4:] if netloc.startswith("www.") else "www." + netloc
+
+    variants = [
+        f"{scheme}://{netloc}/",
+        f"{alt_scheme}://{netloc}/",
+        f"{scheme}://{alt_netloc}/",
+        f"{alt_scheme}://{alt_netloc}/",
+    ]
+
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+        "Accept": "text/html,*/*",
+        "Accept-Language": "fr-FR,fr;q=0.9",
+    })
+
+    for v in variants:
+        try:
+            r = s.get(v, timeout=(4, 10), allow_redirects=True)
+            if r.status_code < 400:
+                return r.url
+        except Exception:
+            continue
+
+    return None
 
 
 # ──────────────────────────────────────────────

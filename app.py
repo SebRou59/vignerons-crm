@@ -309,6 +309,63 @@ def _scrape_emails_websites(entries: list[dict]) -> None:
     st.cache_data.clear()
 
 
+def _fix_site_webs(entries: list[dict]) -> None:
+    """
+    Valide et corrige les URLs de sites web.
+    Workers en threads → queue → thread principal Streamlit pour l'UI.
+    """
+    import queue as _q
+    import concurrent.futures
+    from scraper import validate_and_fix_url
+
+    total      = len(entries)
+    results_q  = _q.Queue()
+    status_box = st.empty()
+    bar        = st.progress(0)
+    log_box    = st.empty()
+    logs: list[str] = []
+    fixed  = 0
+    broken = 0
+
+    def _worker(entry: dict) -> None:
+        fixed_url = validate_and_fix_url(entry["url"])
+        results_q.put((entry, fixed_url))
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    for e in entries:
+        executor.submit(_worker, e)
+
+    done = 0
+    while done < total:
+        try:
+            entry, fixed_url = results_q.get(timeout=60)
+        except _q.Empty:
+            break
+        done += 1
+        original = entry["url"]
+        if fixed_url is None:
+            broken += 1
+            logs.append(f"❌ {entry['nom']} — `{original}` (inaccessible)")
+        elif fixed_url.rstrip("/") != original.rstrip("/"):
+            fixed += 1
+            db.update_site_web(entry["id"], fixed_url)
+            logs.append(f"✅ {entry['nom']} — `{original}` → `{fixed_url}`")
+        else:
+            logs.append(f"✓ {entry['nom']} — OK")
+        bar.progress(done / total)
+        status_box.info(
+            f"🌐 **{done} / {total}** vérifiés · **{fixed}** corrigés · **{broken}** inaccessibles"
+        )
+        log_box.markdown("\n\n".join(logs[-20:]))
+
+    executor.shutdown(wait=False)
+    bar.progress(1.0)
+    status_box.success(
+        f"✅ {total} vérifiés · {fixed} URL(s) corrigées · {broken} inaccessible(s)"
+    )
+    st.cache_data.clear()
+
+
 def _scrape_coordonnees(urls: list[str]) -> tuple[int, int]:
     """
     Scrape les coordonnées de toutes les URLs en un seul appel.
@@ -645,6 +702,17 @@ def render_list():
         st.caption(f"**{len(entries_sans_email)}** fiche(s) avec site web mais sans email dans la sélection")
         if entries_sans_email and is_scraping_enabled() and st.button(f"📧 Chercher emails via sites web ({len(entries_sans_email)} fiches)", type="secondary"):
             _scrape_emails_websites(entries_sans_email)
+            _refresh()
+
+    entries_with_site = [
+        {"id": v["id"], "url": v["site_web"], "nom": v.get("nom", "")}
+        for v in filtered
+        if v.get("site_web")
+    ]
+    if entries_with_site and is_scraping_enabled():
+        st.caption(f"**{len(entries_with_site)}** fiche(s) avec site web dans la sélection")
+        if st.button(f"🌐 Vérifier / corriger les URLs sites web ({len(entries_with_site)} fiches)", type="secondary"):
+            _fix_site_webs(entries_with_site)
             _refresh()
 
     # ── Export CSV ──
